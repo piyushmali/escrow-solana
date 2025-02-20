@@ -253,4 +253,162 @@ describe("escrow-contract test cases", () => {
       assert.ok(err, "Transaction should fail due to insufficient funds");
     }
   });
+  it("Fails to initialize with zero amount", async () => {
+    const zeroAmount = new anchor.BN(0);
+    const newEscrowSeed = new anchor.BN(Date.now());
+    const [newEscrowAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), newEscrowSeed.toArrayLike(Buffer, "le", 8)],
+      program.programId
+    );
+    const [newVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), newEscrowAccount.toBuffer()],
+      program.programId
+    );
+
+    try {
+      await program.methods
+        .initialize(newEscrowSeed, zeroAmount)
+        .accounts({
+          initializer: payer.publicKey,
+          initializerDepositTokenAccount: initializerTokenAccount,
+          escrowAccount: newEscrowAccount,
+          vault: newVault,
+          mint,
+          systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .rpc();
+      assert.fail("Should not initialize with zero amount");
+    } catch (err) {
+      assert.ok(err, "Expected error for zero amount");
+    }
+  });
+
+  it("Fails to initialize with insufficient balance", async () => {
+    const largeAmount = new anchor.BN(1000000); // Amount larger than minted
+    const newEscrowSeed = new anchor.BN(Date.now());
+    const [newEscrowAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), newEscrowSeed.toArrayLike(Buffer, "le", 8)],
+      program.programId
+    );
+    const [newVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), newEscrowAccount.toBuffer()],
+      program.programId
+    );
+
+    try {
+      await program.methods
+        .initialize(newEscrowSeed, largeAmount)
+        .accounts({
+          initializer: payer.publicKey,
+          initializerDepositTokenAccount: initializerTokenAccount,
+          escrowAccount: newEscrowAccount,
+          vault: newVault,
+          mint,
+          systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .rpc();
+      assert.fail("Should not initialize with insufficient balance");
+    } catch (err) {
+      assert.ok(err, "Expected error for insufficient balance");
+    }
+  });
+
+  it("Fails to withdraw with wrong recipient token account", async () => {
+    // Create new escrow for this test
+    const newEscrowSeed = new anchor.BN(Date.now());
+    const [newEscrowAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), newEscrowSeed.toArrayLike(Buffer, "le", 8)],
+      program.programId
+    );
+    const [newVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), newEscrowAccount.toBuffer()],
+      program.programId
+    );
+
+    // Initialize new escrow
+    await program.methods
+      .initialize(newEscrowSeed, amount)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: newEscrowAccount,
+        vault: newVault,
+        mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .rpc();
+
+    // Create wrong token account (using initializer's instead of recipient's)
+    try {
+      await program.methods
+        .withdraw()
+        .accounts({
+          recipient: recipient.publicKey,
+          recipientTokenAccount: initializerTokenAccount, // Wrong token account
+          escrowAccount: newEscrowAccount,
+          vault: newVault,
+          mint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([recipient])
+        .rpc();
+      assert.fail("Should not withdraw to wrong token account");
+    } catch (err) {
+      assert.ok(err, "Expected error for wrong token account");
+    }
+  });
+
+  it("Fails to cancel with wrong initializer", async () => {
+    // Create new escrow for this test
+    const newEscrowSeed = new anchor.BN(Date.now());
+    const [newEscrowAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), newEscrowSeed.toArrayLike(Buffer, "le", 8)],
+      program.programId
+    );
+    const [newVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), newEscrowAccount.toBuffer()],
+      program.programId
+    );
+
+    // Initialize new escrow
+    await program.methods
+      .initialize(newEscrowSeed, amount)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: newEscrowAccount,
+        vault: newVault,
+        mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .rpc();
+
+    // Try to cancel with wrong initializer
+    const wrongInitializer = Keypair.generate();
+    try {
+      await program.methods
+        .cancel()
+        .accounts({
+          initializer: wrongInitializer.publicKey,
+          initializerDepositTokenAccount: initializerTokenAccount,
+          escrowAccount: newEscrowAccount,
+          vault: newVault,
+          mint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([wrongInitializer])
+        .rpc();
+      assert.fail("Should not cancel with wrong initializer");
+    } catch (err) {
+      assert.ok(err, "Expected error for wrong initializer");
+    }
+  });
 });
