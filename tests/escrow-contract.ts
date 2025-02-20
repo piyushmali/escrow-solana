@@ -14,20 +14,19 @@ describe("escrow-contract", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
-  const program = anchor.workspace.EscrowContract as Program<Escrow>;
+  const program = anchor.workspace.Escrow as Program<Escrow>;
   const payer = provider.wallet as anchor.Wallet;
 
   let mint: PublicKey;
   let initializerTokenAccount: PublicKey;
   let recipientTokenAccount: PublicKey;
-  let escrowAccount: PublicKey; // PDA instead of Keypair
+  let escrowAccount: PublicKey;
   let vault: PublicKey;
   let bump: number;
-  let escrowSeed = new anchor.BN(Date.now()); // Unique escrow seed
+  let escrowSeed = new anchor.BN(Date.now());
   const amount = new anchor.BN(1000);
 
   before(async () => {
-    // Create Mint
     mint = await createMint(
       provider.connection,
       payer.payer,
@@ -36,7 +35,6 @@ describe("escrow-contract", () => {
       0
     );
 
-    // Create Token Accounts
     initializerTokenAccount = (
       await getOrCreateAssociatedTokenAccount(
         provider.connection,
@@ -55,7 +53,6 @@ describe("escrow-contract", () => {
       )
     ).address;
 
-    // Mint tokens to initializer
     await mintTo(
       provider.connection,
       payer.payer,
@@ -65,13 +62,11 @@ describe("escrow-contract", () => {
       amount.toNumber()
     );
 
-    // Compute Escrow Account PDA
     [escrowAccount, bump] = PublicKey.findProgramAddressSync(
       [Buffer.from("escrow"), escrowSeed.toArrayLike(Buffer, "le", 8)],
       program.programId
     );
 
-    // Compute Vault PDA
     [vault] = PublicKey.findProgramAddressSync(
       [Buffer.from("vault"), escrowAccount.toBuffer()],
       program.programId
@@ -84,7 +79,7 @@ describe("escrow-contract", () => {
       .accounts({
         initializer: payer.publicKey,
         initializerDepositTokenAccount: initializerTokenAccount,
-        escrowAccount: escrowAccount, // Now correctly set as a PDA
+        escrowAccount: escrowAccount,
         vault,
         mint,
         systemProgram: SystemProgram.programId,
@@ -97,13 +92,31 @@ describe("escrow-contract", () => {
     assert.ok(escrow.initializer.equals(payer.publicKey));
   });
 
+  it("Fails to withdraw without initializing", async () => {
+    try {
+      await program.methods.withdraw().rpc();
+      assert.fail("Withdraw should fail without initialization");
+    } catch (err) {
+      assert.ok(err, "Transaction should fail");
+    }
+  });
+
+  it("Fails to cancel without initializing", async () => {
+    try {
+      await program.methods.cancel().rpc();
+      assert.fail("Cancel should fail without initialization");
+    } catch (err) {
+      assert.ok(err, "Transaction should fail");
+    }
+  });
+
   it("Withdraws from escrow", async () => {
     await program.methods
       .withdraw()
       .accounts({
         recipient: payer.publicKey,
-        recipientTokenAccount,
-        escrowAccount,
+        recipientTokenAccount: recipientTokenAccount,
+        escrowAccount: escrowAccount,
         vault,
         mint,
         tokenProgram: TOKEN_PROGRAM_ID,
@@ -116,13 +129,26 @@ describe("escrow-contract", () => {
     assert.strictEqual(Number(recipientBalance), amount.toNumber());
   });
 
+  it("Fails unauthorized withdrawal", async () => {
+    try {
+      const fakeUser = anchor.web3.Keypair.generate();
+      await program.methods
+        .withdraw()
+        .signers([fakeUser])
+        .rpc();
+      assert.fail("Unauthorized withdraw should fail");
+    } catch (err) {
+      assert.ok(err, "Transaction should fail");
+    }
+  });
+
   it("Cancels the escrow", async () => {
     await program.methods
       .cancel()
       .accounts({
         initializer: payer.publicKey,
         initializerDepositTokenAccount: initializerTokenAccount,
-        escrowAccount,
+        escrowAccount: escrowAccount,
         vault,
         mint,
         tokenProgram: TOKEN_PROGRAM_ID,
@@ -133,5 +159,18 @@ describe("escrow-contract", () => {
       await provider.connection.getTokenAccountBalance(initializerTokenAccount)
     ).value.amount;
     assert.strictEqual(Number(initializerBalance), amount.toNumber());
+  });
+
+  it("Fails unauthorized cancel", async () => {
+    try {
+      const fakeUser = anchor.web3.Keypair.generate();
+      await program.methods
+        .cancel()
+        .signers([fakeUser])
+        .rpc();
+      assert.fail("Unauthorized cancel should fail");
+    } catch (err) {
+      assert.ok(err, "Transaction should fail");
+    }
   });
 });
