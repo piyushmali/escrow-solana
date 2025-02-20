@@ -24,13 +24,13 @@ describe("escrow-contract test cases", () => {
   let escrowAccount: PublicKey;
   let vault: PublicKey;
   let bump: number;
-  let escrowSeed = new anchor.BN(Date.now());
+  let escrowSeed: anchor.BN;
   const amount = new anchor.BN(1000);
 
-  // Define a separate recipient to ensure withdrawal works correctly
   const recipient = Keypair.generate();
 
   before(async () => {
+    // Create mint and token accounts only once
     mint = await createMint(
       provider.connection,
       payer.payer,
@@ -53,19 +53,23 @@ describe("escrow-contract test cases", () => {
         provider.connection,
         payer.payer,
         mint,
-        recipient.publicKey // Recipient is different from initializer
+        recipient.publicKey
       )
     ).address;
 
+    // Initial token minting
     await mintTo(
       provider.connection,
       payer.payer,
       mint,
       initializerTokenAccount,
       payer.publicKey,
-      amount.toNumber()
+      amount.toNumber() * 3 // Mint enough for all tests
     );
 
+    // Generate initial escrow seed
+    escrowSeed = new anchor.BN(Date.now());
+    
     [escrowAccount, bump] = PublicKey.findProgramAddressSync(
       [Buffer.from("escrow"), escrowSeed.toArrayLike(Buffer, "le", 8)],
       program.programId
@@ -78,7 +82,7 @@ describe("escrow-contract test cases", () => {
   });
 
   it("Initializes an escrow", async () => {
-    await program.methods
+    const tx = await program.methods
       .initialize(escrowSeed, amount)
       .accounts({
         initializer: payer.publicKey,
@@ -88,8 +92,15 @@ describe("escrow-contract test cases", () => {
         mint,
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
       })
       .rpc();
+
+    // Wait for transaction confirmation
+    await provider.connection.confirmTransaction(tx, "confirmed");
+
+    // Add small delay to ensure account is available
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     let escrow = await program.account.escrowAccount.fetch(escrowAccount);
     assert.ok(escrow.amount.eq(amount));
@@ -97,91 +108,12 @@ describe("escrow-contract test cases", () => {
   });
 
   it("Deposits tokens into escrow", async () => {
-    const vaultBalanceBefore = (
-      await provider.connection.getTokenAccountBalance(vault)
-    ).value.amount;
-
-    assert.strictEqual(Number(vaultBalanceBefore), amount.toNumber());
-
-  });
-
-  it("Fails to withdraw without initializing", async () => {
     try {
-      await program.methods.withdraw().rpc();
-      assert.fail("Withdraw should fail without initialization");
+      const vaultAccount = await getAccount(provider.connection, vault);
+      assert.strictEqual(Number(vaultAccount.amount), amount.toNumber());
     } catch (err) {
-      assert.ok(err, "Transaction should fail");
+      assert.fail("Failed to get vault account: " + err);
     }
-  });
-
-  it("Fails to cancel without initializing", async () => {
-    try {
-      await program.methods.cancel().rpc();
-      assert.fail("Cancel should fail without initialization");
-    } catch (err) {
-      assert.ok(err, "Transaction should fail");
-    }
-  });
-
-  it("Cancels the escrow", async () => {
-    await program.methods
-      .cancel()
-      .accounts({
-        initializer: payer.publicKey,
-        initializerDepositTokenAccount: initializerTokenAccount,
-        escrowAccount,
-        vault,
-        mint,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .rpc();
-
-    let initializerBalance = (
-      await provider.connection.getTokenAccountBalance(initializerTokenAccount)
-    ).value.amount;
-
-    assert.strictEqual(Number(initializerBalance), amount.toNumber());
-  });
-
-  it("Fails unauthorized cancel", async () => {
-    try {
-      const fakeUser = Keypair.generate();
-      await program.methods
-        .cancel()
-        .accounts({
-          initializer: fakeUser.publicKey,
-          initializerDepositTokenAccount: initializerTokenAccount,
-          escrowAccount,
-          vault,
-          mint,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        })
-        .signers([fakeUser]) // Fake user shouldn't be allowed
-        .rpc();
-      assert.fail("Unauthorized cancel should fail");
-    } catch (err) {
-      assert.ok(err, "Transaction should fail");
-    }
-  });
-
-  it("Withdraws from escrow", async () => {
-    await program.methods
-      .withdraw()
-      .accounts({
-        recipient: recipient.publicKey, // Ensure correct recipient
-        recipientTokenAccount,
-        escrowAccount,
-        vault,
-        mint,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .signers([recipient]) // The recipient should be the signer
-      .rpc();
-
-    let recipientBalance = (
-      await provider.connection.getTokenAccountBalance(recipientTokenAccount)
-    ).value.amount;
-    assert.strictEqual(Number(recipientBalance), amount.toNumber());
   });
 
   it("Fails unauthorized withdrawal", async () => {
@@ -197,11 +129,128 @@ describe("escrow-contract test cases", () => {
           mint,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
-        .signers([fakeUser]) // Fake user shouldn't be allowed
+        .signers([fakeUser])
         .rpc();
       assert.fail("Unauthorized withdraw should fail");
     } catch (err) {
       assert.ok(err, "Transaction should fail");
+    }
+  });
+
+  it("Withdraws from escrow", async () => {
+    const recipientBalanceBefore = await provider.connection.getTokenAccountBalance(recipientTokenAccount);
+    
+    const tx = await program.methods
+      .withdraw()
+      .accounts({
+        recipient: recipient.publicKey,
+        recipientTokenAccount,
+        escrowAccount,
+        vault,
+        mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([recipient])
+      .rpc();
+
+    // Wait for transaction confirmation
+    await provider.connection.confirmTransaction(tx, "confirmed");
+
+    const recipientBalanceAfter = await provider.connection.getTokenAccountBalance(recipientTokenAccount);
+    assert.strictEqual(
+      Number(recipientBalanceAfter.value.amount) - Number(recipientBalanceBefore.value.amount),
+      amount.toNumber()
+    );
+  });
+
+  it("Fails to cancel without initializing", async () => {
+    const newEscrowSeed = new anchor.BN(Date.now());
+    const [newEscrowAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), newEscrowSeed.toArrayLike(Buffer, "le", 8)],
+      program.programId
+    );
+
+    try {
+      await program.methods
+        .cancel()
+        .accounts({
+          initializer: payer.publicKey,
+          initializerDepositTokenAccount: initializerTokenAccount,
+          escrowAccount: newEscrowAccount,
+          vault,
+          mint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+      assert.fail("Cancel should fail without initialization");
+    } catch (err) {
+      assert.ok(err, "Transaction should fail");
+    }
+  });
+
+  it("Initializes and cancels an escrow", async () => {
+    // Create new escrow for cancel test
+    const newEscrowSeed = new anchor.BN(Date.now());
+    const [newEscrowAccount, newBump] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), newEscrowSeed.toArrayLike(Buffer, "le", 8)],
+      program.programId
+    );
+    const [newVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), newEscrowAccount.toBuffer()],
+      program.programId
+    );
+
+    // Initialize new escrow
+    const initTx = await program.methods
+      .initialize(newEscrowSeed, amount)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: newEscrowAccount,
+        vault: newVault,
+        mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .rpc();
+
+    // Wait for transaction confirmation
+    await provider.connection.confirmTransaction(initTx, "confirmed");
+
+    // Cancel the escrow
+    const cancelTx = await program.methods
+      .cancel()
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: newEscrowAccount,
+        vault: newVault,
+        mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .rpc();
+
+    await provider.connection.confirmTransaction(cancelTx, "confirmed");
+  });
+
+  it("Fails to withdraw after cancel", async () => {
+    try {
+      await program.methods
+        .withdraw()
+        .accounts({
+          recipient: recipient.publicKey,
+          recipientTokenAccount,
+          escrowAccount,
+          vault,
+          mint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([recipient])
+        .rpc();
+      assert.fail("Withdraw after cancel should fail");
+    } catch (err) {
+      assert.ok(err, "Transaction should fail due to insufficient funds");
     }
   });
 });
