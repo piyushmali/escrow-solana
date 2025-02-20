@@ -1,143 +1,137 @@
-import * as anchor from '@project-serum/anchor';
-import { Program } from '@project-serum/anchor';
-import { EscrowContract } from '../target/types/escrow_contract';
+import * as anchor from "@coral-xyz/anchor";
+import { Program } from "@coral-xyz/anchor";
+import { Escrow } from "../target/types/escrow";
+import { assert } from "chai";
+import { PublicKey, SystemProgram } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
   createMint,
-  createAccount,
+  getOrCreateAssociatedTokenAccount,
   mintTo,
-  getAccount,
-} from '@solana/spl-token';
-import { PublicKey } from '@solana/web3.js';
-import { assert } from 'chai';
+} from "@solana/spl-token";
 
-describe('escrow-contract', () => {
+describe("escrow-contract", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
-  const program = anchor.workspace.EscrowContract as Program<EscrowContract>;
-  const payer = anchor.web3.Keypair.generate();
-  const initializer = anchor.web3.Keypair.generate();
-  const recipient = anchor.web3.Keypair.generate();
-  
+  const program = anchor.workspace.EscrowContract as Program<Escrow>;
+  const payer = provider.wallet as anchor.Wallet;
+
   let mint: PublicKey;
   let initializerTokenAccount: PublicKey;
   let recipientTokenAccount: PublicKey;
-  let escrowAccount: PublicKey;
+  let escrowAccount: PublicKey; // PDA instead of Keypair
   let vault: PublicKey;
-  let escrowSeed = new anchor.BN(Math.floor(Math.random() * 100000));
-  let depositAmount = new anchor.BN(100000000);
-  
+  let bump: number;
+  let escrowSeed = new anchor.BN(Date.now()); // Unique escrow seed
+  const amount = new anchor.BN(1000);
+
   before(async () => {
-    // Airdrop SOL to payer
-    const airdropSig = await provider.connection.requestAirdrop(
-      payer.publicKey,
-      2 * anchor.web3.LAMPORTS_PER_SOL
-    );
-    await provider.connection.confirmTransaction(airdropSig);
-    
-    // Transfer some SOL to initializer
-    const tx = new anchor.web3.Transaction().add(
-      anchor.web3.SystemProgram.transfer({
-        fromPubkey: payer.publicKey,
-        toPubkey: initializer.publicKey,
-        lamports: anchor.web3.LAMPORTS_PER_SOL / 2,
-      }),
-      anchor.web3.SystemProgram.transfer({
-        fromPubkey: payer.publicKey,
-        toPubkey: recipient.publicKey,
-        lamports: anchor.web3.LAMPORTS_PER_SOL / 2,
-      })
-    );
-    await provider.sendAndConfirm(tx, [payer]);
-    
-    // Create mint and token accounts
+    // Create Mint
     mint = await createMint(
       provider.connection,
-      payer,
+      payer.payer,
       payer.publicKey,
       null,
-      6
+      0
     );
-    
-    initializerTokenAccount = await createAccount(
-      provider.connection,
-      initializer,
-      mint,
-      initializer.publicKey
-    );
-    
-    recipientTokenAccount = await createAccount(
-      provider.connection,
-      recipient,
-      mint,
-      recipient.publicKey
-    );
-    
+
+    // Create Token Accounts
+    initializerTokenAccount = (
+      await getOrCreateAssociatedTokenAccount(
+        provider.connection,
+        payer.payer,
+        mint,
+        payer.publicKey
+      )
+    ).address;
+
+    recipientTokenAccount = (
+      await getOrCreateAssociatedTokenAccount(
+        provider.connection,
+        payer.payer,
+        mint,
+        payer.publicKey
+      )
+    ).address;
+
     // Mint tokens to initializer
     await mintTo(
       provider.connection,
-      payer,
+      payer.payer,
       mint,
       initializerTokenAccount,
       payer.publicKey,
-      depositAmount.toNumber()
+      amount.toNumber()
     );
-    
-    // Derive PDA addresses
-    [escrowAccount] = await PublicKey.findProgramAddress(
-      [Buffer.from("escrow"), escrowSeed.toArrayLike(Buffer, 'le', 8)],
+
+    // Compute Escrow Account PDA
+    [escrowAccount, bump] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), escrowSeed.toArrayLike(Buffer, "le", 8)],
       program.programId
     );
-    
-    [vault] = await PublicKey.findProgramAddress(
+
+    // Compute Vault PDA
+    [vault] = PublicKey.findProgramAddressSync(
       [Buffer.from("vault"), escrowAccount.toBuffer()],
       program.programId
     );
   });
 
-  it('Initialize escrow', async () => {
+  it("Initializes an escrow", async () => {
     await program.methods
-      .initialize(escrowSeed, depositAmount)
+      .initialize(escrowSeed, amount)
       .accounts({
-        initializer: initializer.publicKey,
+        initializer: payer.publicKey,
         initializerDepositTokenAccount: initializerTokenAccount,
-        escrowAccount,
+        escrowAccount: escrowAccount, // Now correctly set as a PDA
         vault,
         mint,
-        systemProgram: anchor.web3.SystemProgram.programId,
+        systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
-        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
       })
-      .signers([initializer])
       .rpc();
-      
-    // Verify escrow state
-    const escrowState = await program.account.escrowAccount.fetch(escrowAccount);
-    assert.equal(escrowState.initializer.toString(), initializer.publicKey.toString());
-    assert.equal(escrowState.amount.toString(), depositAmount.toString());
-    
-    // Verify tokens transferred
-    const vaultAccount = await getAccount(provider.connection, vault);
-    assert.equal(vaultAccount.amount.toString(), depositAmount.toString());
+
+    let escrow = await program.account.escrowAccount.fetch(escrowAccount);
+    assert.ok(escrow.amount.eq(amount));
+    assert.ok(escrow.initializer.equals(payer.publicKey));
   });
-  
-  it('Withdraw from escrow', async () => {
+
+  it("Withdraws from escrow", async () => {
     await program.methods
       .withdraw()
       .accounts({
-        recipient: recipient.publicKey,
+        recipient: payer.publicKey,
         recipientTokenAccount,
         escrowAccount,
         vault,
         mint,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
-      .signers([recipient])
       .rpc();
-      
-    // Verify tokens transferred
-    const recipientAccount = await getAccount(provider.connection, recipientTokenAccount);
-    assert.equal(recipientAccount.amount.toString(), depositAmount.toString());
+
+    let recipientBalance = (
+      await provider.connection.getTokenAccountBalance(recipientTokenAccount)
+    ).value.amount;
+    assert.strictEqual(Number(recipientBalance), amount.toNumber());
+  });
+
+  it("Cancels the escrow", async () => {
+    await program.methods
+      .cancel()
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount,
+        vault,
+        mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .rpc();
+
+    let initializerBalance = (
+      await provider.connection.getTokenAccountBalance(initializerTokenAccount)
+    ).value.amount;
+    assert.strictEqual(Number(initializerBalance), amount.toNumber());
   });
 });

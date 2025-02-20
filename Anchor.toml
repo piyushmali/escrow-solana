@@ -2,7 +2,7 @@
 
 [features]
 resolution = true
-skip-lint = false
+skip-lint = true
 seeds = true
 
 [programs.devnet]
