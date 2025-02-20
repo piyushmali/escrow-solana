@@ -2,15 +2,16 @@ import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Escrow } from "../target/types/escrow";
 import { assert } from "chai";
-import { PublicKey, SystemProgram } from "@solana/web3.js";
+import { PublicKey, SystemProgram, Keypair } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
   createMint,
   getOrCreateAssociatedTokenAccount,
   mintTo,
+  getAccount,
 } from "@solana/spl-token";
 
-describe("escrow-contract", () => {
+describe("escrow-contract test cases", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
@@ -25,6 +26,9 @@ describe("escrow-contract", () => {
   let bump: number;
   let escrowSeed = new anchor.BN(Date.now());
   const amount = new anchor.BN(1000);
+
+  // Define a separate recipient to ensure withdrawal works correctly
+  const recipient = Keypair.generate();
 
   before(async () => {
     mint = await createMint(
@@ -49,7 +53,7 @@ describe("escrow-contract", () => {
         provider.connection,
         payer.payer,
         mint,
-        payer.publicKey
+        recipient.publicKey // Recipient is different from initializer
       )
     ).address;
 
@@ -79,7 +83,7 @@ describe("escrow-contract", () => {
       .accounts({
         initializer: payer.publicKey,
         initializerDepositTokenAccount: initializerTokenAccount,
-        escrowAccount: escrowAccount,
+        escrowAccount,
         vault,
         mint,
         systemProgram: SystemProgram.programId,
@@ -90,6 +94,15 @@ describe("escrow-contract", () => {
     let escrow = await program.account.escrowAccount.fetch(escrowAccount);
     assert.ok(escrow.amount.eq(amount));
     assert.ok(escrow.initializer.equals(payer.publicKey));
+  });
+
+  it("Deposits tokens into escrow", async () => {
+    const vaultBalanceBefore = (
+      await provider.connection.getTokenAccountBalance(vault)
+    ).value.amount;
+
+    assert.strictEqual(Number(vaultBalanceBefore), amount.toNumber());
+
   });
 
   it("Fails to withdraw without initializing", async () => {
@@ -110,17 +123,59 @@ describe("escrow-contract", () => {
     }
   });
 
-  it("Withdraws from escrow", async () => {
+  it("Cancels the escrow", async () => {
     await program.methods
-      .withdraw()
+      .cancel()
       .accounts({
-        recipient: payer.publicKey,
-        recipientTokenAccount: recipientTokenAccount,
-        escrowAccount: escrowAccount,
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount,
         vault,
         mint,
         tokenProgram: TOKEN_PROGRAM_ID,
       })
+      .rpc();
+
+    let initializerBalance = (
+      await provider.connection.getTokenAccountBalance(initializerTokenAccount)
+    ).value.amount;
+
+    assert.strictEqual(Number(initializerBalance), amount.toNumber());
+  });
+
+  it("Fails unauthorized cancel", async () => {
+    try {
+      const fakeUser = Keypair.generate();
+      await program.methods
+        .cancel()
+        .accounts({
+          initializer: fakeUser.publicKey,
+          initializerDepositTokenAccount: initializerTokenAccount,
+          escrowAccount,
+          vault,
+          mint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([fakeUser]) // Fake user shouldn't be allowed
+        .rpc();
+      assert.fail("Unauthorized cancel should fail");
+    } catch (err) {
+      assert.ok(err, "Transaction should fail");
+    }
+  });
+
+  it("Withdraws from escrow", async () => {
+    await program.methods
+      .withdraw()
+      .accounts({
+        recipient: recipient.publicKey, // Ensure correct recipient
+        recipientTokenAccount,
+        escrowAccount,
+        vault,
+        mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([recipient]) // The recipient should be the signer
       .rpc();
 
     let recipientBalance = (
@@ -131,44 +186,20 @@ describe("escrow-contract", () => {
 
   it("Fails unauthorized withdrawal", async () => {
     try {
-      const fakeUser = anchor.web3.Keypair.generate();
+      const fakeUser = Keypair.generate();
       await program.methods
         .withdraw()
-        .signers([fakeUser])
+        .accounts({
+          recipient: fakeUser.publicKey,
+          recipientTokenAccount,
+          escrowAccount,
+          vault,
+          mint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([fakeUser]) // Fake user shouldn't be allowed
         .rpc();
       assert.fail("Unauthorized withdraw should fail");
-    } catch (err) {
-      assert.ok(err, "Transaction should fail");
-    }
-  });
-
-  it("Cancels the escrow", async () => {
-    await program.methods
-      .cancel()
-      .accounts({
-        initializer: payer.publicKey,
-        initializerDepositTokenAccount: initializerTokenAccount,
-        escrowAccount: escrowAccount,
-        vault,
-        mint,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .rpc();
-
-    let initializerBalance = (
-      await provider.connection.getTokenAccountBalance(initializerTokenAccount)
-    ).value.amount;
-    assert.strictEqual(Number(initializerBalance), amount.toNumber());
-  });
-
-  it("Fails unauthorized cancel", async () => {
-    try {
-      const fakeUser = anchor.web3.Keypair.generate();
-      await program.methods
-        .cancel()
-        .signers([fakeUser])
-        .rpc();
-      assert.fail("Unauthorized cancel should fail");
     } catch (err) {
       assert.ok(err, "Transaction should fail");
     }
