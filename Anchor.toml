@@ -6,7 +6,7 @@ skip-lint = true
 seeds = true
 
 [programs.devnet]
-escrow = "F9zSjL7BveRqKDwLcrpU9cdzzVjSAZhE4swHNzfNeDf7"
+escrow_contract = "BxqYJWUnHctCZxNq92JvC8WyrUHrmEo9vbZHbN2TtJSS"
 
 [registry]
 url = "https://api.apr.dev"
