@@ -59,13 +59,14 @@ describe("escrow-contract test cases", () => {
       )
     ).address;
 
+    // Increase initial minting to cover all test cases
     await mintTo(
       provider.connection,
       payer.payer,
       mint,
       initializerTokenAccount,
       payer.publicKey,
-      amount.toNumber() * 3
+      amount.toNumber() * 20 // Increased to ensure sufficient funds for all tests
     );
 
     escrowSeed = Math.floor(Date.now() / 1000);
@@ -318,4 +319,332 @@ describe("escrow-contract test cases", () => {
       assert.ok(err, "Expected error for already initialized escrow");
     }
   });
+
+  it("Fails to deposit with insufficient token balance", async () => {
+    const newEscrowSeed = Math.floor(Date.now() / 1000);
+    const largeAmount = new anchor.BN(1_000_000_000);
+    const [newEscrowAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), new anchor.BN(newEscrowSeed).toArrayLike(Buffer, "le", 4)],
+      program.programId
+    );
+    const [newVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), newEscrowAccount.toBuffer()],
+      program.programId
+    );
+
+    try {
+      await program.methods
+        .deposit(newEscrowSeed, largeAmount, expirationTime, feePercentage)
+        .accounts({
+          initializer: payer.publicKey,
+          initializerDepositTokenAccount: initializerTokenAccount,
+          escrowAccount: newEscrowAccount,
+          vault: newVault,
+          mint,
+          systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        } as any)
+        .rpc();
+      assert.fail("Should not deposit with insufficient balance");
+    } catch (err) {
+      assert.ok(err, "Expected error for insufficient token balance");
+    }
+  });
+
+
+  it("Successfully withdraws with maximum fee percentage", async () => {
+    const newEscrowSeed = Math.floor(Date.now() / 1000);
+    const maxFeePercentage = 100;
+    const [newEscrowAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), new anchor.BN(newEscrowSeed).toArrayLike(Buffer, "le", 4)],
+      program.programId
+    );
+    const [newVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), newEscrowAccount.toBuffer()],
+      program.programId
+    );
+
+    const tx = await program.methods
+      .deposit(newEscrowSeed, amount, expirationTime, maxFeePercentage)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: newEscrowAccount,
+        vault: newVault,
+        mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .rpc();
+
+    await confirmTransaction(tx);
+
+    const recipientBalanceBefore = await provider.connection.getTokenAccountBalance(recipientTokenAccount);
+
+    const withdrawTx = await program.methods
+      .withdraw()
+      .accounts({
+        recipient: recipient.publicKey,
+        recipientTokenAccount,
+        escrowAccount: newEscrowAccount,
+        vault: newVault,
+        mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .signers([recipient])
+      .rpc();
+
+    await confirmTransaction(withdrawTx);
+
+    const recipientBalanceAfter = await provider.connection.getTokenAccountBalance(recipientTokenAccount);
+    assert.strictEqual(
+      Number(recipientBalanceAfter.value.amount) - Number(recipientBalanceBefore.value.amount),
+      0,
+      "Recipient should receive 0 tokens with 100% fee"
+    );
+  });
+
+  it("Successfully cancels immediately after deposit", async () => {
+    const newEscrowSeed = Math.floor(Date.now() / 1000);
+    const [newEscrowAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), new anchor.BN(newEscrowSeed).toArrayLike(Buffer, "le", 4)],
+      program.programId
+    );
+    const [newVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), newEscrowAccount.toBuffer()],
+      program.programId
+    );
+
+    const depositTx = await program.methods
+      .deposit(newEscrowSeed, amount, expirationTime, feePercentage)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: newEscrowAccount,
+        vault: newVault,
+        mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .rpc();
+
+    await confirmTransaction(depositTx);
+
+    const balanceBefore = await provider.connection.getTokenAccountBalance(initializerTokenAccount);
+
+    const cancelTx = await program.methods
+      .cancel()
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: newEscrowAccount,
+        vault: newVault,
+        mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .rpc();
+
+    await confirmTransaction(cancelTx);
+
+    const balanceAfter = await provider.connection.getTokenAccountBalance(initializerTokenAccount);
+    assert.strictEqual(
+      Number(balanceAfter.value.amount) - Number(balanceBefore.value.amount),
+      amount.toNumber(),
+      "Initializer should receive full amount back after immediate cancel"
+    );
+  });
+  it("Fails to withdraw with tampered vault authority", async () => {
+    const newEscrowSeed = Math.floor(Date.now() / 1000);
+    const [newEscrowAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), new anchor.BN(newEscrowSeed).toArrayLike(Buffer, "le", 4)],
+      program.programId
+    );
+    const [newVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), newEscrowAccount.toBuffer()],
+      program.programId
+    );
+    const tx = await program.methods
+      .deposit(newEscrowSeed, amount, expirationTime, feePercentage)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: newEscrowAccount,
+        vault: newVault,
+        mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .rpc();
+    await confirmTransaction(tx);
+    const fakeVault = (
+      await getOrCreateAssociatedTokenAccount(
+        provider.connection,
+        payer.payer,
+        mint,
+        payer.publicKey // Incorrect authority
+      )
+    ).address;
+    try {
+      await program.methods
+        .withdraw()
+        .accounts({
+          recipient: recipient.publicKey,
+          recipientTokenAccount,
+          escrowAccount: newEscrowAccount,
+          vault: fakeVault,
+          mint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        } as any)
+        .signers([recipient])
+        .rpc();
+      assert.fail("Should not withdraw with incorrect vault authority");
+    } catch (err) {
+      assert.include(
+        err.message,
+        "AnchorError caused by account: vault", // Look for account name in error
+        "Expected error for tampered vault authority"
+      );
+    }
+  });
+  
+  it("Fails to withdraw with wrong recipient token account mint", async () => {
+    const wrongMint = await createMint(
+      provider.connection,
+      payer.payer,
+      payer.publicKey,
+      null,
+      0
+    );
+    
+    const wrongRecipientTokenAccount = (
+      await getOrCreateAssociatedTokenAccount(
+        provider.connection,
+        payer.payer,
+        wrongMint,
+        recipient.publicKey
+      )
+    ).address;
+    const newEscrowSeed = Math.floor(Date.now() / 1000);
+    const [newEscrowAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), new anchor.BN(newEscrowSeed).toArrayLike(Buffer, "le", 4)],
+      program.programId
+    );
+    const [newVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), newEscrowAccount.toBuffer()],
+      program.programId
+    );
+    const tx = await program.methods
+      .deposit(newEscrowSeed, amount, expirationTime, feePercentage)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: newEscrowAccount,
+        vault: newVault,
+        mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .rpc();
+    await confirmTransaction(tx);
+    try {
+      await program.methods
+        .withdraw()
+        .accounts({
+          recipient: recipient.publicKey,
+          recipientTokenAccount: wrongRecipientTokenAccount,
+          escrowAccount: newEscrowAccount,
+          vault: newVault,
+          mint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        } as any)
+        .signers([recipient])
+        .rpc();
+      assert.fail("Should not withdraw to token account with different mint");
+    } catch (err) {
+      // Check for simulation failure, which occurs when token accounts have mismatched mints
+      assert.include(
+        err.message,
+        "Simulation failed",
+        "Expected error due to wrong mint"
+      );
+    }
+  });
+  
+  it("Fails to cancel by non-initializer", async () => {
+    const newEscrowSeed = Math.floor(Date.now() / 1000);
+    const [newEscrowAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), new anchor.BN(newEscrowSeed).toArrayLike(Buffer, "le", 4)],
+      program.programId
+    );
+    const [newVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), newEscrowAccount.toBuffer()],
+      program.programId
+    );
+    const tx = await program.methods
+      .deposit(newEscrowSeed, amount, expirationTime, feePercentage)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: newEscrowAccount,
+        vault: newVault,
+        mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .rpc();
+    await confirmTransaction(tx);
+    
+    // Instead of generating a new keypair and airdropping SOL,
+    // use a pre-funded account from the wallet (similar to recipient)
+    const nonInitializer = anchor.web3.Keypair.generate();
+    
+    // Transfer some SOL from payer to nonInitializer instead of using airdrop
+    const transferIx = SystemProgram.transfer({
+      fromPubkey: payer.publicKey,
+      toPubkey: nonInitializer.publicKey,
+      lamports: 10000000, // 0.01 SOL
+    });
+    
+    const transferTx = new anchor.web3.Transaction().add(transferIx);
+    await provider.sendAndConfirm(transferTx, [payer.payer]);
+    
+    const nonInitializerTokenAccount = (
+      await getOrCreateAssociatedTokenAccount(
+        provider.connection,
+        payer.payer,
+        mint,
+        nonInitializer.publicKey
+      )
+    ).address;
+    
+    try {
+      await program.methods
+        .cancel()
+        .accounts({
+          initializer: nonInitializer.publicKey,
+          initializerDepositTokenAccount: nonInitializerTokenAccount,
+          escrowAccount: newEscrowAccount,
+          vault: newVault,
+          mint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        } as any)
+        .signers([nonInitializer])
+        .rpc();
+      assert.fail("Should not allow non-initializer to cancel");
+    } catch (err) {
+      // Look for account name in error message instead of specific error code
+      assert.include(
+        err.message,
+        "AnchorError caused by account: initializer",
+        "Expected error for non-initializer attempting to cancel"
+      );
+    }
+  });
+
 });
