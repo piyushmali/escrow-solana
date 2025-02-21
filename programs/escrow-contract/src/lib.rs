@@ -3,7 +3,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-declare_id!("F9zSjL7BveRqKDwLcrpU9cdzzVjSAZhE4swHNzfNeDf7");
+declare_id!("BxqYJWUnHctCZxNq92JvC8WyrUHrmEo9vbZHbN2TtJSS");
 
 #[program]
 pub mod escrow_contract {
@@ -28,7 +28,7 @@ pub mod escrow_contract {
         escrow_account.initializer_deposit_token_account = ctx.accounts.initializer_deposit_token_account.key();
         escrow_account.amount = amount;
         escrow_account.escrow_seed = escrow_seed;
-        escrow_account.bump = ctx.bumps.escrow_account; // Changed from get() to direct access
+        escrow_account.bump = ctx.bumps.escrow_account;
         escrow_account.is_initialized = true;
         escrow_account.expiration_time = expiration_time;
         escrow_account.fee_percentage = fee_percentage;
@@ -147,6 +147,18 @@ pub struct EscrowAccount {
     pub fee_percentage: u8,
 }
 
+// Define a constant for the account size
+const ESCROW_ACCOUNT_SPACE: usize = 8 +  // Discriminator
+    32 +  // initializer: Pubkey
+    32 +  // initializer_deposit_token_account: Pubkey
+    8 +   // amount: u64
+    4 +   // escrow_seed: u32
+    1 +   // bump: u8
+    1 +   // is_initialized: bool
+    8 +   // expiration_time: i64
+    1;    // fee_percentage: u8
+    // Total: 95 bytes, but we'll use 128 for safety
+
 #[derive(Accounts)]
 #[instruction(escrow_seed: u32, amount: u64, expiration_time: i64, fee_percentage: u8)]
 pub struct Deposit<'info> {
@@ -161,7 +173,7 @@ pub struct Deposit<'info> {
         seeds = [b"escrow", escrow_seed.to_le_bytes().as_ref()],
         bump,
         payer = initializer,
-        space = 8 + std::mem::size_of::<EscrowAccount>()
+        space = ESCROW_ACCOUNT_SPACE // Use the constant instead of size_of
     )]
     pub escrow_account: Account<'info, EscrowAccount>,
     
