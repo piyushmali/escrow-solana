@@ -2,8 +2,9 @@
 
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+use anchor_lang::solana_program;
 
-declare_id!("BxqYJWUnHctCZxNq92JvC8WyrUHrmEo9vbZHbN2TtJSS");
+declare_id!("C5C2TF7sVJCqFN1vsQygtGLDSEFBLgbVxJs7o55VCg2N");
 
 #[program]
 pub mod escrow_contract {
@@ -132,6 +133,56 @@ pub mod escrow_contract {
 
         Ok(())
     }
+
+    // New function that performs a CPI to another program
+    pub fn execute_external_action(
+        ctx: Context<ExternalAction>,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        let escrow_account = &ctx.accounts.escrow_account;
+        
+        // Verify that only the initializer can call this function
+        require!(
+            ctx.accounts.initializer.key() == escrow_account.initializer,
+            EscrowError::Unauthorized
+        );
+        
+        // Create the seeds for PDA signing
+        let seeds = &[
+            b"escrow".as_ref(),
+            &escrow_account.escrow_seed.to_le_bytes(),
+            &[escrow_account.bump],
+        ];
+        let signer = &[&seeds[..]];
+    
+        // Create the instruction to call the external program
+        let instruction = solana_program::instruction::Instruction {
+            program_id: ctx.accounts.external_program.key(),
+            accounts: ctx.remaining_accounts.iter().map(|acc| {
+                solana_program::instruction::AccountMeta {
+                    pubkey: acc.key(),
+                    is_signer: acc.is_signer,
+                    is_writable: acc.is_writable,
+                }
+            }).collect(),
+            data,
+        };
+    
+        // Execute the CPI
+        solana_program::program::invoke_signed(
+            &instruction,
+            &ctx.remaining_accounts,
+            signer,
+        )?;
+    
+        emit!(ExternalActionEvent {
+            initializer: ctx.accounts.initializer.key(),
+            external_program: ctx.accounts.external_program.key(),
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+    
+        Ok(())
+    }
 }
 
 #[account]
@@ -148,16 +199,16 @@ pub struct EscrowAccount {
 }
 
 // Define a constant for the account size
-const ESCROW_ACCOUNT_SPACE: usize = 8 +  // Discriminator
-    32 +  // initializer: Pubkey
-    32 +  // initializer_deposit_token_account: Pubkey
-    8 +   // amount: u64
-    4 +   // escrow_seed: u32
-    1 +   // bump: u8
-    1 +   // is_initialized: bool
-    8 +   // expiration_time: i64
-    1;    // fee_percentage: u8
-    // Total: 95 bytes, but we'll use 128 for safety
+const ESCROW_ACCOUNT_SPACE: usize = 256;
+    // 32 +  // initializer: Pubkey
+    // 32 +  // initializer_deposit_token_account: Pubkey
+    // 8 +   // amount: u64
+    // 4 +   // escrow_seed: u32
+    // 1 +   // bump: u8
+    // 1 +   // is_initialized: bool
+    // 8 +   // expiration_time: i64
+    // 1;    // fee_percentage: u8
+    // // Total: 95 bytes, but we'll use 128 for safety
 
 #[derive(Accounts)]
 #[instruction(escrow_seed: u32, amount: u64, expiration_time: i64, fee_percentage: u8)]
@@ -173,7 +224,7 @@ pub struct Deposit<'info> {
         seeds = [b"escrow", escrow_seed.to_le_bytes().as_ref()],
         bump,
         payer = initializer,
-        space = ESCROW_ACCOUNT_SPACE // Use the constant instead of size_of
+        space = ESCROW_ACCOUNT_SPACE // Updated constant
     )]
     pub escrow_account: Account<'info, EscrowAccount>,
     
@@ -220,6 +271,19 @@ pub struct Cancel<'info> {
     pub token_program: Program<'info, Token>,
 }
 
+// New account struct for CPI to external program
+#[derive(Accounts)]
+pub struct ExternalAction<'info> {
+    #[account(mut)]
+    pub initializer: Signer<'info>,
+    #[account(mut, seeds = [b"escrow", escrow_account.escrow_seed.to_le_bytes().as_ref()], bump = escrow_account.bump)]
+    pub escrow_account: Account<'info, EscrowAccount>,
+    /// CHECK: This is the external program we'll call via CPI
+    pub external_program: UncheckedAccount<'info>,
+    /// System program may be needed for some operations
+    pub system_program: Program<'info, System>,
+}
+
 #[error_code]
 pub enum EscrowError {
     #[msg("Amount must be greater than zero")]
@@ -253,5 +317,13 @@ pub struct WithdrawEvent {
 pub struct CancelEvent {
     pub initializer: Pubkey,
     pub amount: u64,
+    pub timestamp: i64,
+}
+
+// New event for the external program action
+#[event]
+pub struct ExternalActionEvent {
+    pub initializer: Pubkey,
+    pub external_program: Pubkey,
     pub timestamp: i64,
 }
