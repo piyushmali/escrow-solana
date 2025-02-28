@@ -2,8 +2,7 @@ import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { EscrowContract } from "../target/types/escrow_contract";
 import { assert } from "chai";
-import { PublicKey, SystemProgram, Keypair, TransactionSignature } from "@solana/web3.js";
-import { createTransferInstruction } from "@solana/spl-token";
+import { PublicKey, SystemProgram, Keypair, TransactionSignature, ComputeBudgetProgram } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
   createMint,
@@ -668,69 +667,85 @@ describe("escrow-contract test cases", () => {
         .rpc();
     await confirmTransaction(depositTx);
 
-    // Get recipient's token balance before the transfer
+    // Verify vault authority
+    const vaultAccountInfo = await getAccount(provider.connection, newVault);
+    // console.log("Vault authority:", vaultAccountInfo.owner.toBase58());
+    // console.log("Escrow PDA:", newEscrowAccount.toBase58());
+    assert.ok(
+        vaultAccountInfo.owner.equals(newEscrowAccount),
+        "Vault authority should be the escrow PDA"
+    );
+
     const recipientBalanceBefore = await provider.connection.getTokenAccountBalance(recipientTokenAccount);
+    const transferAmount = 500;
 
-    const transferAmount = 500; // Transfer half the amount as an example
+    // Create Transfer instruction data
+    const dataBuffer = Buffer.alloc(12);
+    dataBuffer.writeUInt8(3, 0); // Transfer instruction discriminator
+    dataBuffer.writeBigUInt64LE(BigInt(transferAmount), 1);
 
-    // Create the instruction data for the SPL Token Transfer instruction
-    const dataBuffer = Buffer.alloc(9);
-    dataBuffer.writeUInt8(3, 0); // Transfer instruction (index 3)
-    dataBuffer.writeBigUInt64LE(BigInt(transferAmount), 1); // Amount as u64 little-endian
+    try {
+        const tx = await program.methods
+            .executeExternalAction(dataBuffer)
+            .accounts({
+                initializer: provider.wallet.publicKey,
+                escrowAccount: newEscrowAccount,
+                externalProgram: TOKEN_PROGRAM_ID,
+                systemProgram: SystemProgram.programId,
+            })
+            .remainingAccounts([
+                {
+                    pubkey: newVault,              // Source
+                    isSigner: false,
+                    isWritable: true,
+                },
+                {
+                    pubkey: recipientTokenAccount, // Destination
+                    isSigner: false,
+                    isWritable: true,
+                },
+                {
+                    pubkey: newEscrowAccount,      // Authority (PDA)
+                    isSigner: false,              // Signed via invoke_signed
+                    isWritable: false,
+                },
+            ])
+            .preInstructions([
+                ComputeBudgetProgram.setComputeUnitLimit({ units: 300000 })
+            ])
+            .rpc({ 
+                skipPreflight: false,
+                commitment: "confirmed"
+            });
 
-    // When performing a token transfer via CPI, we need to ensure we have the correct account ordering:
-    // 1. Source account (vault)
-    // 2. Destination account (recipient)
-    // 3. Owner of source account (the escrow PDA which must sign)
-    const tx = await program.methods
-        .executeExternalAction(dataBuffer)
-        .accounts({
-            initializer: provider.wallet.publicKey,
-            escrowAccount: newEscrowAccount,
-            externalProgram: TOKEN_PROGRAM_ID,
-            systemProgram: SystemProgram.programId,
-        })
-        .remainingAccounts([
-            // Account ordering for SPL Token transfer is crucial
-            {
-                pubkey: newVault,             // Source account
-                isSigner: false,
-                isWritable: true,
-            },
-            {
-                pubkey: recipientTokenAccount, // Destination account
-                isSigner: false,
-                isWritable: true,
-            },
-            {
-                pubkey: newEscrowAccount,      // Owner/Authority of source account (PDA)
-                isSigner: false,               // Changed to false - program will sign with PDA internally
-                isWritable: false,
-            },
-        ])
-        .rpc();
+        await confirmTransaction(tx);
 
-    await confirmTransaction(tx);
+        // Verify the transfer
+        const vaultAccount = await getAccount(provider.connection, newVault);
+        const recipientBalanceAfter = await provider.connection.getTokenAccountBalance(recipientTokenAccount);
+        const recipientBalanceChange = Number(recipientBalanceAfter.value.amount) - Number(recipientBalanceBefore.value.amount);
 
-    // Verify the transfer occurred
-    const vaultAccount = await getAccount(provider.connection, newVault);
-    const recipientBalanceAfter = await provider.connection.getTokenAccountBalance(recipientTokenAccount);
-    const recipientBalanceChange = Number(recipientBalanceAfter.value.amount) - Number(recipientBalanceBefore.value.amount);
+        assert.strictEqual(
+            Number(vaultAccount.amount),
+            amount.toNumber() - transferAmount,
+            "Vault should have reduced by transfer amount"
+        );
+        assert.strictEqual(
+            recipientBalanceChange,
+            transferAmount,
+            "Recipient should have received transfer amount"
+        );
 
-    assert.strictEqual(
-        Number(vaultAccount.amount),
-        amount.toNumber() - transferAmount,
-        "Vault should have reduced by transfer amount"
-    );
-    assert.strictEqual(
-        recipientBalanceChange,
-        transferAmount,
-        "Recipient should have received transfer amount"
-    );
-
-    const escrow = await program.account.escrowAccount.fetch(newEscrowAccount);
-    assert.ok(escrow.amount.eq(amount));
-    assert.ok(escrow.initializer.equals(provider.wallet.publicKey));
+        const escrow = await program.account.escrowAccount.fetch(newEscrowAccount);
+        assert.ok(escrow.amount.eq(amount));
+        assert.ok(escrow.initializer.equals(provider.wallet.publicKey));
+    } catch (err) {
+        console.error("Transaction failed with error:", err);
+        if (err.logs) {
+            console.error("Transaction logs:", err.logs);
+        }
+        throw err;
+    }
 });
 
   it("Fails CPI execution by non-initializer", async () => {
