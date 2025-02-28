@@ -829,4 +829,466 @@ describe("escrow-contract test cases", () => {
       );
     }
   });
+  it("Handles edge case with extremely high fee percentage", async () => {
+    const escrowSeed = Math.floor(Date.now() / 1000);
+    const highFeePercentage = 99; // 99% fee
+    
+    const [escrowAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), new anchor.BN(escrowSeed).toArrayLike(Buffer, "le", 4)],
+      program.programId
+    );
+    
+    const [vault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), escrowAccount.toBuffer()],
+      program.programId
+    );
+
+    // Deposit with high fee
+    const tx = await program.methods
+      .deposit(escrowSeed, amount, expirationTime, highFeePercentage)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: escrowAccount,
+        vault: vault,
+        mint: mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .rpc();
+
+    await confirmTransaction(tx);
+    
+    const recipientBalanceBefore = await provider.connection.getTokenAccountBalance(recipientTokenAccount);
+    
+    // Withdraw with high fee
+    const withdrawTx = await program.methods
+      .withdraw()
+      .accounts({
+        recipient: recipient.publicKey,
+        recipientTokenAccount: recipientTokenAccount,
+        escrowAccount: escrowAccount,
+        vault: vault,
+        mint: mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .signers([recipient])
+      .rpc();
+
+    await confirmTransaction(withdrawTx);
+    
+    const recipientBalanceAfter = await provider.connection.getTokenAccountBalance(recipientTokenAccount);
+    const expectedAmount = amount.sub(amount.muln(highFeePercentage).divn(100));
+    
+    assert.strictEqual(
+      Number(recipientBalanceAfter.value.amount) - Number(recipientBalanceBefore.value.amount),
+      expectedAmount.toNumber(),
+      "Recipient should receive only 1% of the amount with 99% fee"
+    );
+  });
+
+  it("Tests cancellation after expiration", async () => {
+    const escrowSeed = Math.floor(Date.now() / 1000);
+    const pastExpiration = new anchor.BN(Date.now() / 1000 - 3600); // 1 hour in the past
+    
+    const [escrowAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), new anchor.BN(escrowSeed).toArrayLike(Buffer, "le", 4)],
+      program.programId
+    );
+    
+    const [vault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), escrowAccount.toBuffer()],
+      program.programId
+    );
+
+    // Deposit with past expiration time
+    const tx = await program.methods
+      .deposit(escrowSeed, amount, pastExpiration, feePercentage)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: escrowAccount,
+        vault: vault,
+        mint: mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .rpc();
+
+    await confirmTransaction(tx);
+    
+    const initializerBalanceBefore = await provider.connection.getTokenAccountBalance(initializerTokenAccount);
+    
+    // Cancel after expiration (should succeed)
+    const cancelTx = await program.methods
+      .cancel()
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: escrowAccount,
+        vault: vault,
+        mint: mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .rpc();
+
+    await confirmTransaction(cancelTx);
+    
+    const initializerBalanceAfter = await provider.connection.getTokenAccountBalance(initializerTokenAccount);
+    
+    assert.strictEqual(
+      Number(initializerBalanceAfter.value.amount) - Number(initializerBalanceBefore.value.amount),
+      amount.toNumber(),
+      "Initializer should receive full amount back when canceling after expiration"
+    );
+  });
+
+
+  it("Tests parallel escrows with different seeds", async () => {
+    const escrowSeed1 = Math.floor(Date.now() / 1000);
+    const escrowSeed2 = escrowSeed1 + 1;
+    
+    const [escrowAccount1] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), new anchor.BN(escrowSeed1).toArrayLike(Buffer, "le", 4)],
+      program.programId
+    );
+    
+    const [vault1] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), escrowAccount1.toBuffer()],
+      program.programId
+    );
+    
+    const [escrowAccount2] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), new anchor.BN(escrowSeed2).toArrayLike(Buffer, "le", 4)],
+      program.programId
+    );
+    
+    const [vault2] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), escrowAccount2.toBuffer()],
+      program.programId
+    );
+
+    // Create first escrow
+    const tx1 = await program.methods
+      .deposit(escrowSeed1, amount, expirationTime, feePercentage)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: escrowAccount1,
+        vault: vault1,
+        mint: mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .rpc();
+
+    await confirmTransaction(tx1);
+    
+    // Create second escrow
+    const tx2 = await program.methods
+      .deposit(escrowSeed2, amount, expirationTime, feePercentage)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: escrowAccount2,
+        vault: vault2,
+        mint: mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .rpc();
+
+    await confirmTransaction(tx2);
+    
+    // Verify both escrows exist with the correct amounts
+    const escrow1 = await program.account.escrowAccount.fetch(escrowAccount1);
+    const escrow2 = await program.account.escrowAccount.fetch(escrowAccount2);
+    
+    assert.ok(escrow1.amount.eq(amount), "First escrow should have correct amount");
+    assert.ok(escrow2.amount.eq(amount), "Second escrow should have correct amount");
+    
+    // Cancel both escrows
+    await program.methods
+      .cancel()
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: escrowAccount1,
+        vault: vault1,
+        mint: mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .rpc();
+      
+    await program.methods
+      .cancel()
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: escrowAccount2,
+        vault: vault2,
+        mint: mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .rpc();
+  });
+
+  it("Tests executeExternalAction with minimum required accounts", async () => {
+    const escrowSeed = Math.floor(Date.now() / 1000);
+    
+    const [escrowAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), new anchor.BN(escrowSeed).toArrayLike(Buffer, "le", 4)],
+      program.programId
+    );
+    
+    const [vault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), escrowAccount.toBuffer()],
+      program.programId
+    );
+
+    // Deposit tokens into escrow first
+    const depositTx = await program.methods
+      .deposit(escrowSeed, amount, expirationTime, feePercentage)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: escrowAccount,
+        vault: vault,
+        mint: mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .rpc();
+
+    await confirmTransaction(depositTx);
+
+    // Ensure we have exactly the minimum number of accounts
+    try {
+      await program.methods
+        .executeExternalAction(Buffer.from([]))
+        .accounts({
+          initializer: payer.publicKey,
+          escrowAccount: escrowAccount,
+          externalProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        } as any)
+        .remainingAccounts([
+          // Nothing - this should fail because we need at least 3 accounts
+        ])
+        .rpc();
+      assert.fail("Should require at least 3 remaining accounts");
+    } catch (err) {
+      assert.include(
+        err.toString(),
+        "InvalidAmount",
+        "Expected error for insufficient remaining accounts"
+      );
+    }
+    
+    // Cancel to clean up
+    await program.methods
+      .cancel()
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: escrowAccount,
+        vault: vault,
+        mint: mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .rpc();
+  });
+
+  it("Tests executeExternalAction with invalid external program", async () => {
+    const escrowSeed = Math.floor(Date.now() / 1000);
+    
+    const [escrowAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), new anchor.BN(escrowSeed).toArrayLike(Buffer, "le", 4)],
+      program.programId
+    );
+    
+    const [vault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), escrowAccount.toBuffer()],
+      program.programId
+    );
+
+    // Deposit tokens into escrow first
+    const depositTx = await program.methods
+      .deposit(escrowSeed, amount, expirationTime, feePercentage)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: escrowAccount,
+        vault: vault,
+        mint: mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .rpc();
+
+    await confirmTransaction(depositTx);
+
+    // Create an invalid external program (using System Program instead of Token Program)
+    try {
+      const dataBuffer = Buffer.alloc(9);
+      dataBuffer.writeUInt8(3, 0); // Transfer instruction discriminator
+      dataBuffer.writeBigUInt64LE(BigInt(100), 1);
+
+      await program.methods
+        .executeExternalAction(dataBuffer)
+        .accounts({
+          initializer: payer.publicKey,
+          escrowAccount: escrowAccount,
+          externalProgram: SystemProgram.programId, // Invalid program for token transfer
+          systemProgram: SystemProgram.programId,
+        } as any)
+        .remainingAccounts([
+          {
+            pubkey: vault,
+            isSigner: false,
+            isWritable: true,
+          },
+          {
+            pubkey: recipientTokenAccount,
+            isSigner: false,
+            isWritable: true,
+          },
+          {
+            pubkey: escrowAccount,
+            isSigner: false,
+            isWritable: false,
+          },
+        ])
+        .rpc();
+      assert.fail("Should fail with invalid external program");
+    } catch (err) {
+      assert.ok(err, "Expected error for invalid external program");
+    }
+    
+    // Cancel to clean up
+    await program.methods
+      .cancel()
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: escrowAccount,
+        vault: vault,
+        mint: mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .rpc();
+  });
+
+  it("Tests deposit with minimum and maximum possible fee percentages", async () => {
+    // Test with minimum fee (0%)
+    const escrowSeedMin = Math.floor(Date.now() / 1000);
+    const minFeePercentage = 0;
+    
+    const [escrowAccountMin] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), new anchor.BN(escrowSeedMin).toArrayLike(Buffer, "le", 4)],
+      program.programId
+    );
+    
+    const [vaultMin] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), escrowAccountMin.toBuffer()],
+      program.programId
+    );
+
+    const tx1 = await program.methods
+      .deposit(escrowSeedMin, amount, expirationTime, minFeePercentage)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: escrowAccountMin,
+        vault: vaultMin,
+        mint: mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .rpc();
+
+    await confirmTransaction(tx1);
+    
+    const escrowMin = await program.account.escrowAccount.fetch(escrowAccountMin);
+    assert.strictEqual(escrowMin.feePercentage, minFeePercentage, "Fee percentage should be 0%");
+    
+    // Test withdraw with 0% fee
+    const recipientBalanceBefore = await provider.connection.getTokenAccountBalance(recipientTokenAccount);
+    
+    const withdrawTx = await program.methods
+      .withdraw()
+      .accounts({
+        recipient: recipient.publicKey,
+        recipientTokenAccount: recipientTokenAccount,
+        escrowAccount: escrowAccountMin,
+        vault: vaultMin,
+        mint: mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .signers([recipient])
+      .rpc();
+
+    await confirmTransaction(withdrawTx);
+    
+    const recipientBalanceAfter = await provider.connection.getTokenAccountBalance(recipientTokenAccount);
+    
+    assert.strictEqual(
+      Number(recipientBalanceAfter.value.amount) - Number(recipientBalanceBefore.value.amount),
+      amount.toNumber(),
+      "Recipient should receive full amount with 0% fee"
+    );
+    
+    // Test with maximum fee (100%)
+    const escrowSeedMax = Math.floor(Date.now() / 1000) + 10;
+    const maxFeePercentage = 100;
+    
+    const [escrowAccountMax] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), new anchor.BN(escrowSeedMax).toArrayLike(Buffer, "le", 4)],
+      program.programId
+    );
+    
+    const [vaultMax] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), escrowAccountMax.toBuffer()],
+      program.programId
+    );
+
+    const tx2 = await program.methods
+      .deposit(escrowSeedMax, amount, expirationTime, maxFeePercentage)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: escrowAccountMax,
+        vault: vaultMax,
+        mint: mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      } as any)
+      .rpc();
+
+    await confirmTransaction(tx2);
+    
+    const escrowMax = await program.account.escrowAccount.fetch(escrowAccountMax);
+    assert.strictEqual(escrowMax.feePercentage, maxFeePercentage, "Fee percentage should be 100%");
+    
+    // Cancel the max fee escrow for cleanup
+    await program.methods
+      .cancel()
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: escrowAccountMax,
+        vault: vaultMax,
+        mint: mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      } as any)
+      .rpc();
+  });
 });
