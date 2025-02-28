@@ -3,13 +3,13 @@ import { Program } from "@coral-xyz/anchor";
 import { EscrowContract } from "../target/types/escrow_contract";
 import { assert } from "chai";
 import { PublicKey, SystemProgram, Keypair, TransactionSignature } from "@solana/web3.js";
+import { createTransferInstruction } from "@solana/spl-token";
 import {
   TOKEN_PROGRAM_ID,
   createMint,
   getOrCreateAssociatedTokenAccount,
   mintTo,
   getAccount,
-  createAssociatedTokenAccountInstruction,
 } from "@solana/spl-token";
 
 describe("escrow-contract test cases", () => {
@@ -59,14 +59,13 @@ describe("escrow-contract test cases", () => {
       )
     ).address;
 
-    // Increase initial minting to cover all test cases
     await mintTo(
       provider.connection,
       payer.payer,
       mint,
       initializerTokenAccount,
       payer.publicKey,
-      amount.toNumber() * 20 // Increased to ensure sufficient funds for all tests
+      amount.toNumber() * 20
     );
 
     escrowSeed = Math.floor(Date.now() / 1000);
@@ -97,13 +96,13 @@ describe("escrow-contract test cases", () => {
       .accounts({
         initializer: payer.publicKey,
         initializerDepositTokenAccount: initializerTokenAccount,
-        escrowAccount,
-        vault,
-        mint,
+        escrowAccount: escrowAccount,
+        vault: vault,
+        mint: mint,
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      } as any) // Type assertion to bypass TS error temporarily
+      })
       .rpc();
 
     await confirmTransaction(tx);
@@ -128,12 +127,12 @@ describe("escrow-contract test cases", () => {
       .withdraw()
       .accounts({
         recipient: recipient.publicKey,
-        recipientTokenAccount,
-        escrowAccount,
-        vault,
-        mint,
+        recipientTokenAccount: recipientTokenAccount,
+        escrowAccount: escrowAccount,
+        vault: vault,
+        mint: mint,
         tokenProgram: TOKEN_PROGRAM_ID,
-      } as any)
+      })
       .signers([recipient])
       .rpc();
 
@@ -165,11 +164,11 @@ describe("escrow-contract test cases", () => {
         initializerDepositTokenAccount: initializerTokenAccount,
         escrowAccount: newEscrowAccount,
         vault: newVault,
-        mint,
+        mint: mint,
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      } as any)
+      })
       .rpc();
 
     await confirmTransaction(initTx);
@@ -182,9 +181,9 @@ describe("escrow-contract test cases", () => {
         initializerDepositTokenAccount: initializerTokenAccount,
         escrowAccount: newEscrowAccount,
         vault: newVault,
-        mint,
+        mint: mint,
         tokenProgram: TOKEN_PROGRAM_ID,
-      } as any)
+      })
       .rpc();
 
     await confirmTransaction(cancelTx);
@@ -214,11 +213,11 @@ describe("escrow-contract test cases", () => {
           initializerDepositTokenAccount: initializerTokenAccount,
           escrowAccount: newEscrowAccount,
           vault: newVault,
-          mint,
+          mint: mint,
           systemProgram: SystemProgram.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
           rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-        } as any)
+        })
         .rpc();
       assert.fail("Should not deposit with zero amount");
     } catch (err) {
@@ -245,11 +244,11 @@ describe("escrow-contract test cases", () => {
         initializerDepositTokenAccount: initializerTokenAccount,
         escrowAccount: newEscrowAccount,
         vault: newVault,
-        mint,
+        mint: mint,
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      } as any)
+      })
       .rpc();
 
     await confirmTransaction(tx);
@@ -259,12 +258,12 @@ describe("escrow-contract test cases", () => {
         .withdraw()
         .accounts({
           recipient: recipient.publicKey,
-          recipientTokenAccount,
+          recipientTokenAccount: recipientTokenAccount,
           escrowAccount: newEscrowAccount,
           vault: newVault,
-          mint,
+          mint: mint,
           tokenProgram: TOKEN_PROGRAM_ID,
-        } as any)
+        })
         .signers([recipient])
         .rpc();
       assert.fail("Should not withdraw after expiration");
@@ -291,11 +290,11 @@ describe("escrow-contract test cases", () => {
         initializerDepositTokenAccount: initializerTokenAccount,
         escrowAccount: newEscrowAccount,
         vault: newVault,
-        mint,
+        mint: mint,
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      } as any)
+      })
       .rpc();
 
     await confirmTransaction(tx);
@@ -308,11 +307,11 @@ describe("escrow-contract test cases", () => {
           initializerDepositTokenAccount: initializerTokenAccount,
           escrowAccount: newEscrowAccount,
           vault: newVault,
-          mint,
+          mint: mint,
           systemProgram: SystemProgram.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
           rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-        } as any)
+        })
         .rpc();
       assert.fail("Should not deposit to already initialized escrow");
     } catch (err) {
@@ -340,18 +339,17 @@ describe("escrow-contract test cases", () => {
           initializerDepositTokenAccount: initializerTokenAccount,
           escrowAccount: newEscrowAccount,
           vault: newVault,
-          mint,
+          mint: mint,
           systemProgram: SystemProgram.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
           rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-        } as any)
+        })
         .rpc();
       assert.fail("Should not deposit with insufficient balance");
     } catch (err) {
       assert.ok(err, "Expected error for insufficient token balance");
     }
   });
-
 
   it("Successfully withdraws with maximum fee percentage", async () => {
     const newEscrowSeed = Math.floor(Date.now() / 1000);
@@ -372,11 +370,11 @@ describe("escrow-contract test cases", () => {
         initializerDepositTokenAccount: initializerTokenAccount,
         escrowAccount: newEscrowAccount,
         vault: newVault,
-        mint,
+        mint: mint,
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      } as any)
+      })
       .rpc();
 
     await confirmTransaction(tx);
@@ -387,12 +385,12 @@ describe("escrow-contract test cases", () => {
       .withdraw()
       .accounts({
         recipient: recipient.publicKey,
-        recipientTokenAccount,
+        recipientTokenAccount: recipientTokenAccount,
         escrowAccount: newEscrowAccount,
         vault: newVault,
-        mint,
+        mint: mint,
         tokenProgram: TOKEN_PROGRAM_ID,
-      } as any)
+      })
       .signers([recipient])
       .rpc();
 
@@ -424,11 +422,11 @@ describe("escrow-contract test cases", () => {
         initializerDepositTokenAccount: initializerTokenAccount,
         escrowAccount: newEscrowAccount,
         vault: newVault,
-        mint,
+        mint: mint,
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      } as any)
+      })
       .rpc();
 
     await confirmTransaction(depositTx);
@@ -442,9 +440,9 @@ describe("escrow-contract test cases", () => {
         initializerDepositTokenAccount: initializerTokenAccount,
         escrowAccount: newEscrowAccount,
         vault: newVault,
-        mint,
+        mint: mint,
         tokenProgram: TOKEN_PROGRAM_ID,
-      } as any)
+      })
       .rpc();
 
     await confirmTransaction(cancelTx);
@@ -456,6 +454,7 @@ describe("escrow-contract test cases", () => {
       "Initializer should receive full amount back after immediate cancel"
     );
   });
+
   it("Fails to withdraw with tampered vault authority", async () => {
     const newEscrowSeed = Math.floor(Date.now() / 1000);
     const [newEscrowAccount] = PublicKey.findProgramAddressSync(
@@ -473,11 +472,11 @@ describe("escrow-contract test cases", () => {
         initializerDepositTokenAccount: initializerTokenAccount,
         escrowAccount: newEscrowAccount,
         vault: newVault,
-        mint,
+        mint: mint,
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      } as any)
+      })
       .rpc();
     await confirmTransaction(tx);
     const fakeVault = (
@@ -485,7 +484,7 @@ describe("escrow-contract test cases", () => {
         provider.connection,
         payer.payer,
         mint,
-        payer.publicKey // Incorrect authority
+        payer.publicKey
       )
     ).address;
     try {
@@ -493,19 +492,19 @@ describe("escrow-contract test cases", () => {
         .withdraw()
         .accounts({
           recipient: recipient.publicKey,
-          recipientTokenAccount,
+          recipientTokenAccount: recipientTokenAccount,
           escrowAccount: newEscrowAccount,
           vault: fakeVault,
-          mint,
+          mint: mint,
           tokenProgram: TOKEN_PROGRAM_ID,
-        } as any)
+        })
         .signers([recipient])
         .rpc();
       assert.fail("Should not withdraw with incorrect vault authority");
     } catch (err) {
       assert.include(
         err.message,
-        "AnchorError caused by account: vault", // Look for account name in error
+        "AnchorError caused by account: vault",
         "Expected error for tampered vault authority"
       );
     }
@@ -544,11 +543,11 @@ describe("escrow-contract test cases", () => {
         initializerDepositTokenAccount: initializerTokenAccount,
         escrowAccount: newEscrowAccount,
         vault: newVault,
-        mint,
+        mint: mint,
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      } as any)
+      })
       .rpc();
     await confirmTransaction(tx);
     try {
@@ -559,14 +558,13 @@ describe("escrow-contract test cases", () => {
           recipientTokenAccount: wrongRecipientTokenAccount,
           escrowAccount: newEscrowAccount,
           vault: newVault,
-          mint,
+          mint: mint,
           tokenProgram: TOKEN_PROGRAM_ID,
-        } as any)
+        })
         .signers([recipient])
         .rpc();
       assert.fail("Should not withdraw to token account with different mint");
     } catch (err) {
-      // Check for simulation failure, which occurs when token accounts have mismatched mints
       assert.include(
         err.message,
         "Simulation failed",
@@ -592,23 +590,20 @@ describe("escrow-contract test cases", () => {
         initializerDepositTokenAccount: initializerTokenAccount,
         escrowAccount: newEscrowAccount,
         vault: newVault,
-        mint,
+        mint: mint,
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      } as any)
+      })
       .rpc();
     await confirmTransaction(tx);
     
-    // Instead of generating a new keypair and airdropping SOL,
-    // use a pre-funded account from the wallet (similar to recipient)
     const nonInitializer = anchor.web3.Keypair.generate();
     
-    // Transfer some SOL from payer to nonInitializer instead of using airdrop
     const transferIx = SystemProgram.transfer({
       fromPubkey: payer.publicKey,
       toPubkey: nonInitializer.publicKey,
-      lamports: 10000000, // 0.01 SOL
+      lamports: 10000000,
     });
     
     const transferTx = new anchor.web3.Transaction().add(transferIx);
@@ -631,14 +626,13 @@ describe("escrow-contract test cases", () => {
           initializerDepositTokenAccount: nonInitializerTokenAccount,
           escrowAccount: newEscrowAccount,
           vault: newVault,
-          mint,
+          mint: mint,
           tokenProgram: TOKEN_PROGRAM_ID,
-        } as any)
+        })
         .signers([nonInitializer])
         .rpc();
       assert.fail("Should not allow non-initializer to cancel");
     } catch (err) {
-      // Look for account name in error message instead of specific error code
       assert.include(
         err.message,
         "AnchorError caused by account: initializer",
@@ -647,4 +641,177 @@ describe("escrow-contract test cases", () => {
     }
   });
 
+  it("Successfully executes CPI to external program", async () => {
+    const newEscrowSeed = Math.floor(Date.now() / 1000);
+    const [newEscrowAccount, escrowBump] = PublicKey.findProgramAddressSync(
+        [Buffer.from("escrow"), new anchor.BN(newEscrowSeed).toArrayLike(Buffer, "le", 4)],
+        program.programId
+    );
+    const [newVault, vaultBump] = PublicKey.findProgramAddressSync(
+        [Buffer.from("vault"), newEscrowAccount.toBuffer()],
+        program.programId
+    );
+
+    // Deposit tokens into escrow first
+    const depositTx = await program.methods
+        .deposit(newEscrowSeed, amount, expirationTime, feePercentage)
+        .accounts({
+            initializer: provider.wallet.publicKey,
+            initializerDepositTokenAccount: initializerTokenAccount,
+            escrowAccount: newEscrowAccount,
+            vault: newVault,
+            mint: mint,
+            systemProgram: SystemProgram.programId,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+        })
+        .rpc();
+    await confirmTransaction(depositTx);
+
+    // Get recipient's token balance before the transfer
+    const recipientBalanceBefore = await provider.connection.getTokenAccountBalance(recipientTokenAccount);
+
+    const transferAmount = 500; // Transfer half the amount as an example
+
+    // Create the instruction data for the SPL Token Transfer instruction
+    const dataBuffer = Buffer.alloc(9);
+    dataBuffer.writeUInt8(3, 0); // Transfer instruction (index 3)
+    dataBuffer.writeBigUInt64LE(BigInt(transferAmount), 1); // Amount as u64 little-endian
+
+    // When performing a token transfer via CPI, we need to ensure we have the correct account ordering:
+    // 1. Source account (vault)
+    // 2. Destination account (recipient)
+    // 3. Owner of source account (the escrow PDA which must sign)
+    const tx = await program.methods
+        .executeExternalAction(dataBuffer)
+        .accounts({
+            initializer: provider.wallet.publicKey,
+            escrowAccount: newEscrowAccount,
+            externalProgram: TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+        })
+        .remainingAccounts([
+            // Account ordering for SPL Token transfer is crucial
+            {
+                pubkey: newVault,             // Source account
+                isSigner: false,
+                isWritable: true,
+            },
+            {
+                pubkey: recipientTokenAccount, // Destination account
+                isSigner: false,
+                isWritable: true,
+            },
+            {
+                pubkey: newEscrowAccount,      // Owner/Authority of source account (PDA)
+                isSigner: false,               // Changed to false - program will sign with PDA internally
+                isWritable: false,
+            },
+        ])
+        .rpc();
+
+    await confirmTransaction(tx);
+
+    // Verify the transfer occurred
+    const vaultAccount = await getAccount(provider.connection, newVault);
+    const recipientBalanceAfter = await provider.connection.getTokenAccountBalance(recipientTokenAccount);
+    const recipientBalanceChange = Number(recipientBalanceAfter.value.amount) - Number(recipientBalanceBefore.value.amount);
+
+    assert.strictEqual(
+        Number(vaultAccount.amount),
+        amount.toNumber() - transferAmount,
+        "Vault should have reduced by transfer amount"
+    );
+    assert.strictEqual(
+        recipientBalanceChange,
+        transferAmount,
+        "Recipient should have received transfer amount"
+    );
+
+    const escrow = await program.account.escrowAccount.fetch(newEscrowAccount);
+    assert.ok(escrow.amount.eq(amount));
+    assert.ok(escrow.initializer.equals(provider.wallet.publicKey));
+});
+
+  it("Fails CPI execution by non-initializer", async () => {
+    const newEscrowSeed = Math.floor(Date.now() / 1000);
+    const [newEscrowAccount] = PublicKey.findProgramAddressSync(
+      [Buffer.from("escrow"), new anchor.BN(newEscrowSeed).toArrayLike(Buffer, "le", 4)],
+      program.programId
+    );
+    const [newVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), newEscrowAccount.toBuffer()],
+      program.programId
+    );
+  
+    const depositTx = await program.methods
+      .deposit(newEscrowSeed, amount, expirationTime, feePercentage)
+      .accounts({
+        initializer: payer.publicKey,
+        initializerDepositTokenAccount: initializerTokenAccount,
+        escrowAccount: newEscrowAccount,
+        vault: newVault,
+        mint: mint,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+      })
+      .rpc();
+    await confirmTransaction(depositTx);
+  
+    const nonInitializer = Keypair.generate();
+    const transferIx = SystemProgram.transfer({
+      fromPubkey: payer.publicKey,
+      toPubkey: nonInitializer.publicKey,
+      lamports: 10000000,
+    });
+    const transferTx = new anchor.web3.Transaction().add(transferIx);
+    await provider.sendAndConfirm(transferTx, [payer.payer]);
+  
+    // Create a proper Buffer for the instruction data
+    const dataBuffer = Buffer.alloc(9);
+    dataBuffer[0] = 3; // Transfer instruction discriminator
+    
+    // Write a small amount as little-endian 64-bit value
+    dataBuffer.writeBigUInt64LE(BigInt(10), 1);
+  
+    try {
+      await program.methods
+        .executeExternalAction(dataBuffer)
+        .accounts({
+          initializer: nonInitializer.publicKey,
+          escrowAccount: newEscrowAccount,
+          externalProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([nonInitializer])
+        .remainingAccounts([
+          {
+            pubkey: newVault,
+            isSigner: false,
+            isWritable: true,
+          },
+          {
+            pubkey: recipientTokenAccount,
+            isSigner: false,
+            isWritable: true,
+          },
+          {
+            pubkey: newEscrowAccount,
+            isSigner: false,
+            isWritable: false,
+          },
+        ])
+        .rpc();
+      assert.fail("Should not allow non-initializer to execute CPI");
+    } catch (err) {
+      // The error might be different now because we're passing the correct buffer format
+      // The test will still fail, but with the actual unauthorized error
+      assert.include(
+        err.toString(),
+        "Error Code: Unauthorized",
+        "Expected unauthorized error for non-initializer"
+      );
+    }
+  });
 });
