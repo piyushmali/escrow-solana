@@ -5,7 +5,7 @@ resolution = true
 skip-lint = true
 
 [programs.devnet]
-escrow_contract = "C5C2TF7sVJCqFN1vsQygtGLDSEFBLgbVxJs7o55VCg2N"
+escrow_contract = "8rvumos4tR9JHzZKEEyqQMTDbpBXregufx6jywxcwx5M"
 
 [registry]
 url = "https://api.apr.dev"

@@ -4,7 +4,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 use anchor_lang::solana_program;
 
-declare_id!("C5C2TF7sVJCqFN1vsQygtGLDSEFBLgbVxJs7o55VCg2N");
+declare_id!("8rvumos4tR9JHzZKEEyqQMTDbpBXregufx6jywxcwx5M");
 
 #[program]
 pub mod escrow_contract {
@@ -134,20 +134,19 @@ pub mod escrow_contract {
         Ok(())
     }
 
-    // New function that performs a CPI to another program
     pub fn execute_external_action(
         ctx: Context<ExternalAction>,
         data: Vec<u8>,
     ) -> Result<()> {
         let escrow_account = &ctx.accounts.escrow_account;
         
-        // Verify that only the initializer can call this function
+        // Verify initializer
         require!(
             ctx.accounts.initializer.key() == escrow_account.initializer,
             EscrowError::Unauthorized
         );
         
-        // Create the seeds for PDA signing
+        // PDA seeds for signing
         let seeds = &[
             b"escrow".as_ref(),
             &escrow_account.escrow_seed.to_le_bytes(),
@@ -155,23 +154,36 @@ pub mod escrow_contract {
         ];
         let signer = &[&seeds[..]];
     
-        // Create the instruction to call the external program
+        // Ensure we have enough accounts
+        require!(
+            ctx.remaining_accounts.len() >= 3,
+            EscrowError::InvalidAmount
+        );
+    
+        // Debug logging
+        msg!("Source: {}", ctx.remaining_accounts[0].key());
+        msg!("Destination: {}", ctx.remaining_accounts[1].key());
+        msg!("Authority: {}", ctx.remaining_accounts[2].key());
+    
+        // Construct the instruction for SPL Token Transfer
         let instruction = solana_program::instruction::Instruction {
             program_id: ctx.accounts.external_program.key(),
-            accounts: ctx.remaining_accounts.iter().map(|acc| {
-                solana_program::instruction::AccountMeta {
-                    pubkey: acc.key(),
-                    is_signer: acc.is_signer,
-                    is_writable: acc.is_writable,
-                }
-            }).collect(),
+            accounts: vec![
+                AccountMeta::new(ctx.remaining_accounts[0].key(), false),       // Source (vault)
+                AccountMeta::new(ctx.remaining_accounts[1].key(), false),       // Destination
+                AccountMeta::new_readonly(ctx.remaining_accounts[2].key(), true), // Authority (PDA, must be signer)
+            ],
             data,
         };
     
-        // Execute the CPI
+        // Execute CPI with exact accounts
         solana_program::program::invoke_signed(
             &instruction,
-            &ctx.remaining_accounts,
+            &[
+                ctx.remaining_accounts[0].clone(), // Source (vault)
+                ctx.remaining_accounts[1].clone(), // Destination
+                ctx.remaining_accounts[2].clone(), // Authority (escrow PDA)
+            ],
             signer,
         )?;
     
