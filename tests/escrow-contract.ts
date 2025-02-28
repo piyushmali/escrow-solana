@@ -1,7 +1,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { EscrowContract } from "../target/types/escrow_contract";
-import { assert } from "chai";
+import { assert, expect } from "chai";
 import { PublicKey, SystemProgram, Keypair, TransactionSignature, ComputeBudgetProgram } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
@@ -101,7 +101,7 @@ describe("escrow-contract test cases", () => {
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
+      } as any)
       .rpc();
 
     await confirmTransaction(tx);
@@ -131,7 +131,7 @@ describe("escrow-contract test cases", () => {
         vault: vault,
         mint: mint,
         tokenProgram: TOKEN_PROGRAM_ID,
-      })
+      } as any)
       .signers([recipient])
       .rpc();
 
@@ -167,7 +167,7 @@ describe("escrow-contract test cases", () => {
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
+      } as any)
       .rpc();
 
     await confirmTransaction(initTx);
@@ -182,7 +182,7 @@ describe("escrow-contract test cases", () => {
         vault: newVault,
         mint: mint,
         tokenProgram: TOKEN_PROGRAM_ID,
-      })
+      } as any)
       .rpc();
 
     await confirmTransaction(cancelTx);
@@ -216,7 +216,7 @@ describe("escrow-contract test cases", () => {
           systemProgram: SystemProgram.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
           rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-        })
+        } as any)
         .rpc();
       assert.fail("Should not deposit with zero amount");
     } catch (err) {
@@ -247,7 +247,7 @@ describe("escrow-contract test cases", () => {
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
+      } as any)
       .rpc();
 
     await confirmTransaction(tx);
@@ -262,7 +262,7 @@ describe("escrow-contract test cases", () => {
           vault: newVault,
           mint: mint,
           tokenProgram: TOKEN_PROGRAM_ID,
-        })
+        } as any)
         .signers([recipient])
         .rpc();
       assert.fail("Should not withdraw after expiration");
@@ -293,7 +293,7 @@ describe("escrow-contract test cases", () => {
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
+      } as any)
       .rpc();
 
     await confirmTransaction(tx);
@@ -310,7 +310,7 @@ describe("escrow-contract test cases", () => {
           systemProgram: SystemProgram.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
           rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-        })
+        } as any)
         .rpc();
       assert.fail("Should not deposit to already initialized escrow");
     } catch (err) {
@@ -342,7 +342,7 @@ describe("escrow-contract test cases", () => {
           systemProgram: SystemProgram.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
           rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-        })
+        } as any)
         .rpc();
       assert.fail("Should not deposit with insufficient balance");
     } catch (err) {
@@ -373,7 +373,7 @@ describe("escrow-contract test cases", () => {
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
+      } as any)
       .rpc();
 
     await confirmTransaction(tx);
@@ -389,7 +389,7 @@ describe("escrow-contract test cases", () => {
         vault: newVault,
         mint: mint,
         tokenProgram: TOKEN_PROGRAM_ID,
-      })
+      } as any)
       .signers([recipient])
       .rpc();
 
@@ -425,7 +425,7 @@ describe("escrow-contract test cases", () => {
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
+      } as any)
       .rpc();
 
     await confirmTransaction(depositTx);
@@ -441,7 +441,7 @@ describe("escrow-contract test cases", () => {
         vault: newVault,
         mint: mint,
         tokenProgram: TOKEN_PROGRAM_ID,
-      })
+      } as any)
       .rpc();
 
     await confirmTransaction(cancelTx);
@@ -475,7 +475,7 @@ describe("escrow-contract test cases", () => {
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
+      } as any)
       .rpc();
     await confirmTransaction(tx);
     const fakeVault = (
@@ -496,7 +496,7 @@ describe("escrow-contract test cases", () => {
           vault: fakeVault,
           mint: mint,
           tokenProgram: TOKEN_PROGRAM_ID,
-        })
+        } as any)
         .signers([recipient])
         .rpc();
       assert.fail("Should not withdraw with incorrect vault authority");
@@ -546,7 +546,7 @@ describe("escrow-contract test cases", () => {
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
+      } as any)
       .rpc();
     await confirmTransaction(tx);
     try {
@@ -559,7 +559,7 @@ describe("escrow-contract test cases", () => {
           vault: newVault,
           mint: mint,
           tokenProgram: TOKEN_PROGRAM_ID,
-        })
+        } as any)
         .signers([recipient])
         .rpc();
       assert.fail("Should not withdraw to token account with different mint");
@@ -593,7 +593,7 @@ describe("escrow-contract test cases", () => {
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
+      } as any)
       .rpc();
     await confirmTransaction(tx);
     
@@ -627,7 +627,7 @@ describe("escrow-contract test cases", () => {
           vault: newVault,
           mint: mint,
           tokenProgram: TOKEN_PROGRAM_ID,
-        })
+        } as any)
         .signers([nonInitializer])
         .rpc();
       assert.fail("Should not allow non-initializer to cancel");
@@ -663,7 +663,7 @@ describe("escrow-contract test cases", () => {
             systemProgram: SystemProgram.programId,
             tokenProgram: TOKEN_PROGRAM_ID,
             rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-        })
+        } as any)
         .rpc();
     await confirmTransaction(depositTx);
 
@@ -692,7 +692,7 @@ describe("escrow-contract test cases", () => {
                 escrowAccount: newEscrowAccount,
                 externalProgram: TOKEN_PROGRAM_ID,
                 systemProgram: SystemProgram.programId,
-            })
+            } as any)
             .remainingAccounts([
                 {
                     pubkey: newVault,              // Source
@@ -712,7 +712,7 @@ describe("escrow-contract test cases", () => {
             ])
             .preInstructions([
                 ComputeBudgetProgram.setComputeUnitLimit({ units: 300000 })
-            ])
+            ] )
             .rpc({ 
                 skipPreflight: false,
                 commitment: "confirmed"
@@ -746,7 +746,7 @@ describe("escrow-contract test cases", () => {
         }
         throw err;
     }
-});
+  });
 
   it("Fails CPI execution by non-initializer", async () => {
     const newEscrowSeed = Math.floor(Date.now() / 1000);
@@ -770,7 +770,7 @@ describe("escrow-contract test cases", () => {
         systemProgram: SystemProgram.programId,
         tokenProgram: TOKEN_PROGRAM_ID,
         rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
+      } as any)
       .rpc();
     await confirmTransaction(depositTx);
   
@@ -798,7 +798,7 @@ describe("escrow-contract test cases", () => {
           escrowAccount: newEscrowAccount,
           externalProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
-        })
+        } as any)
         .signers([nonInitializer])
         .remainingAccounts([
           {
